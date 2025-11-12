@@ -1,13 +1,13 @@
-// readfile_hook.dll
-// - overlay mmap + table parse + ReadFile hook
+// read__read_hook.dll
+// - overlay mmap + table parse + _read hook
 // - partial/edge overlaps handled by merging subranges (XOR once)
-// - synchronous ReadFile only (OVERLAPPED/ERROR_IO_PENDING은 스킵)
 
 #define WIN32_LEAN_AND_MEAN
 #include <windows.h>
 #include <cstdint>
 #include <vector>
 #include <algorithm>
+#include <io.h>          // _read, _lseeki64
 
 #include "MinHook.h"
 
@@ -36,11 +36,11 @@ static uint32_t         g_count = 0;
 // 재진입 가드
 __declspec(thread) static int t_depth = 0;
 
-// ReadFile 원본
-using ReadFile_t = BOOL(WINAPI*)(HANDLE, LPVOID, DWORD, LPDWORD, LPOVERLAPPED);
-static ReadFile_t g_orig_ReadFile_k32 = nullptr;
-static ReadFile_t g_orig_ReadFile_kbase = nullptr;
-static ReadFile_t g_orig_ReadFile_apis = nullptr;
+// _read 원본
+using _read_t = int(__cdecl*)(int fd, void* buf, unsigned int count);
+static _read_t g_orig_read_ucrt = nullptr;
+static _read_t g_orig_read_msvc = nullptr;
+static _read_t g_orig_read_apis = nullptr;
 
 // ===== 유틸 =====
 static void UnmapOverlay() {
@@ -119,49 +119,21 @@ static inline bool Intersect(uint64_t a0, uint64_t a1, uint64_t b0, uint64_t b1,
     return s < e;
 }
 
-// ReadFile 공통 래퍼: 동기만 처리, 부분/경계 겹침 병합 후 XOR 1회
-static BOOL WINAPI DoReadFile(ReadFile_t orig,
-    HANDLE hFile, LPVOID lpBuffer, DWORD nToRead,
-    LPDWORD lpRead, LPOVERLAPPED lpOv) {
-    if (!orig) return FALSE;
+// _read 공통 래퍼: 부분/경계 겹침 병합 후 XOR 1회
+static int __cdecl Do_read(_read_t orig, int fd, void* buf, unsigned int count) {
+    if (!orig) return -1;
+    if (++t_depth > 1) { int r = orig(fd, buf, count); --t_depth; return r; }
 
-    if (++t_depth > 1) { // 재진입시 원본만
-        BOOL ok = orig(hFile, lpBuffer, nToRead, lpRead, lpOv);
-        --t_depth; return ok;
-    }
+    // 현재 파일 오프셋
+    __int64 cur = _lseeki64(fd, 0, SEEK_CUR);
+    int ret = orig(fd, buf, count);   // 실제 읽힌 바이트 수 (음수면 에러)
+    if (ret > 0 && cur >= 0 && g_entries && g_count) {
+        uint64_t read0 = (uint64_t)cur;
+        uint64_t br = (uint64_t)ret;
+        uint64_t read1 = read0 + br;
 
-    // 비동기 or 명시 오프셋 I/O는 스킵
-    if (lpOv) {
-        BOOL ok = orig(hFile, lpBuffer, nToRead, lpRead, lpOv);
-        --t_depth; return ok;
-    }
-
-    // 시작 오프셋: 현재 파일 포인터
-    LARGE_INTEGER cur{};
-    if (!SetFilePointerEx(hFile, { 0 }, &cur, FILE_CURRENT)) {
-        BOOL ok = orig(hFile, lpBuffer, nToRead, lpRead, lpOv);
-        --t_depth; return ok;
-    }
-    uint64_t read0 = (uint64_t)cur.QuadPart;
-
-    // 원본 호출
-    DWORD got = 0;
-    BOOL ok = orig(hFile, lpBuffer, nToRead, &got, lpOv);
-
-    // ERROR_IO_PENDING 등 비동기 케이스는 건드리지 않음
-    if (!ok) {
-        if (GetLastError() == ERROR_IO_PENDING) { --t_depth; return ok; }
-        // 실패면 바꿀 게 없음
-        --t_depth; return ok;
-    }
-
-    if (got && g_entries && g_count) {
-        uint64_t read1 = read0 + (uint64_t)got;
-
-        // 겹치는 subrange들을 수집(버퍼 상대 오프셋)
         struct Sub { size_t r0; size_t r1; };
-        std::vector<Sub> subs;
-        subs.reserve(4);
+        std::vector<Sub> subs; subs.reserve(4);
 
         for (uint32_t i = 0; i < g_count; ++i) {
             uint64_t ent0 = g_entries[i].off;
@@ -175,7 +147,6 @@ static BOOL WINAPI DoReadFile(ReadFile_t orig,
         }
 
         if (!subs.empty()) {
-            // 정렬 후 병합(중첩/인접 구간 합치기)
             std::sort(subs.begin(), subs.end(),
                 [](const Sub& a, const Sub& b) { return a.r0 < b.r0; });
             std::vector<Sub> merged;
@@ -189,8 +160,7 @@ static BOOL WINAPI DoReadFile(ReadFile_t orig,
                     merged.push_back(subs[i]);
                 }
             }
-            // 병합된 각 구간에 대해 XOR 1회 적용
-            BYTE* b = (BYTE*)lpBuffer;
+            BYTE* b = (BYTE*)buf;
             for (const Sub& m : merged) {
                 size_t len = m.r1 - m.r0;
                 XorRange(b + m.r0, len);
@@ -198,26 +168,23 @@ static BOOL WINAPI DoReadFile(ReadFile_t orig,
         }
     }
 
-    // lpRead가 비어 있으면 채워주기(호출자가 NULL 줬을 수도 있음)
-    if (lpRead) *lpRead = got;
-
     --t_depth;
-    return ok;
+    return ret;
 }
 
 // detours
-static BOOL WINAPI ReadFile_detour_k32(HANDLE h, LPVOID p, DWORD n, LPDWORD br, LPOVERLAPPED ov) {
-    return DoReadFile(g_orig_ReadFile_k32, h, p, n, br, ov);
+static int __cdecl _read_detour_ucrt(int fd, void* buf, unsigned int count) {
+    return Do_read(g_orig_read_ucrt, fd, buf, count);
 }
-static BOOL WINAPI ReadFile_detour_kbase(HANDLE h, LPVOID p, DWORD n, LPDWORD br, LPOVERLAPPED ov) {
-    return DoReadFile(g_orig_ReadFile_kbase, h, p, n, br, ov);
+static int __cdecl _read_detour_msvc(int fd, void* buf, unsigned int count) {
+    return Do_read(g_orig_read_msvc, fd, buf, count);
 }
-static BOOL WINAPI ReadFile_detour_apis(HANDLE h, LPVOID p, DWORD n, LPDWORD br, LPOVERLAPPED ov) {
-    return DoReadFile(g_orig_ReadFile_apis, h, p, n, br, ov);
+static int __cdecl _read_detour_apis(int fd, void* buf, unsigned int count) {
+    return Do_read(g_orig_read_apis, fd, buf, count);
 }
 
 // 후킹 설치
-static void InstallReadFileHooks() {
+static void InstallReadHooks__read() {
     if (MH_Initialize() != MH_OK) return;
 
     auto hookOne = [](HMODULE m, const char* name, LPVOID detour, void** pOrig) {
@@ -229,13 +196,13 @@ static void InstallReadFileHooks() {
         }
         };
 
-    HMODULE hk32 = GetModuleHandleW(L"kernel32.dll");
-    HMODULE hkbas = GetModuleHandleW(L"kernelbase.dll");
-    HMODULE happi = GetModuleHandleW(L"api-ms-win-core-file-l1-1-0.dll");
+    HMODULE hucrt = GetModuleHandleW(L"ucrtbase.dll");
+    HMODULE hmsvc = GetModuleHandleW(L"msvcrt.dll");
+    HMODULE happi = GetModuleHandleW(L"api-ms-win-crt-io-l1-1-0.dll");
 
-    hookOne(hk32, "ReadFile", (LPVOID)&ReadFile_detour_k32, (void**)&g_orig_ReadFile_k32);
-    hookOne(hkbas, "ReadFile", (LPVOID)&ReadFile_detour_kbase, (void**)&g_orig_ReadFile_kbase);
-    hookOne(happi, "ReadFile", (LPVOID)&ReadFile_detour_apis, (void**)&g_orig_ReadFile_apis);
+    hookOne(hucrt, "_read", (LPVOID)&_read_detour_ucrt, (void**)&g_orig_read_ucrt);
+    hookOne(hmsvc, "_read", (LPVOID)&_read_detour_msvc, (void**)&g_orig_read_msvc);
+    hookOne(happi, "_read", (LPVOID)&_read_detour_apis, (void**)&g_orig_read_apis);
 }
 
 static void UninstallHooks() {
@@ -256,8 +223,8 @@ BOOL APIENTRY DllMain(HMODULE h, DWORD reason, LPVOID) {
             // 2) 테이블 파싱
             ParseTable();
         }
-        // 3) ReadFile 후킹
-        InstallReadFileHooks();
+        // 3) _read 후킹
+        InstallReadHooks__read();
     }
     else if (reason == DLL_PROCESS_DETACH) {
         UninstallHooks();
