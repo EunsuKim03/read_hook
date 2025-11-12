@@ -1,0 +1,31 @@
+﻿
+Microsoft Visual Studio Solution File, Format Version 12.00
+# Visual Studio Version 17
+VisualStudioVersion = 17.14.36518.9 d17.14
+MinimumVisualStudioVersion = 10.0.40219.1
+Project("{8BC9CEB8-8B4A-11D0-8D11-00A0C91BC942}") = "read_hook", "read_hook\read_hook.vcxproj", "{7322F487-B7A9-4F48-9243-3AC2C0B6A59E}"
+EndProject
+Global
+	GlobalSection(SolutionConfigurationPlatforms) = preSolution
+		Debug|x64 = Debug|x64
+		Debug|x86 = Debug|x86
+		Release|x64 = Release|x64
+		Release|x86 = Release|x86
+	EndGlobalSection
+	GlobalSection(ProjectConfigurationPlatforms) = postSolution
+		{7322F487-B7A9-4F48-9243-3AC2C0B6A59E}.Debug|x64.ActiveCfg = Debug|x64
+		{7322F487-B7A9-4F48-9243-3AC2C0B6A59E}.Debug|x64.Build.0 = Debug|x64
+		{7322F487-B7A9-4F48-9243-3AC2C0B6A59E}.Debug|x86.ActiveCfg = Debug|Win32
+		{7322F487-B7A9-4F48-9243-3AC2C0B6A59E}.Debug|x86.Build.0 = Debug|Win32
+		{7322F487-B7A9-4F48-9243-3AC2C0B6A59E}.Release|x64.ActiveCfg = Release|x64
+		{7322F487-B7A9-4F48-9243-3AC2C0B6A59E}.Release|x64.Build.0 = Release|x64
+		{7322F487-B7A9-4F48-9243-3AC2C0B6A59E}.Release|x86.ActiveCfg = Release|Win32
+		{7322F487-B7A9-4F48-9243-3AC2C0B6A59E}.Release|x86.Build.0 = Release|Win32
+	EndGlobalSection
+	GlobalSection(SolutionProperties) = preSolution
+		HideSolutionNode = FALSE
+	EndGlobalSection
+	GlobalSection(ExtensibilityGlobals) = postSolution
+		SolutionGuid = {73BFC1C5-5D36-499B-B6C4-6706988BFE44}
+	EndGlobalSection
+EndGlobal
