@@ -21,10 +21,9 @@
   <PropertyGroup Label="Globals">
     <VCProjectVersion>17.0</VCProjectVersion>
     <Keyword>Win32Proj</Keyword>
-    <ProjectGuid>{7322f487-b7a9-4f48-9243-3ac2c0b6a59e}</ProjectGuid>
-    <RootNamespace>readhook</RootNamespace>
+    <ProjectGuid>{d0d7982e-da7e-41e6-9476-ab2b3327b4e3}</ProjectGuid>
+    <RootNamespace>readfilehook</RootNamespace>
     <WindowsTargetPlatformVersion>10.0</WindowsTargetPlatformVersion>
-    <ProjectName>fread_hook</ProjectName>
   </PropertyGroup>
   <Import Project="$(VCTargetsPath)\Microsoft.Cpp.Default.props" />
   <PropertyGroup Condition="'$(Configuration)|$(Platform)'=='Debug|Win32'" Label="Configuration">
@@ -72,8 +71,8 @@
   </ImportGroup>
   <PropertyGroup Label="UserMacros" />
   <PropertyGroup Condition="'$(Configuration)|$(Platform)'=='Release|x64'">
-    <IncludePath>C:\Users\es476\Desktop\CASYS\hook\read_hook\read_hook\minhook;$(IncludePath)</IncludePath>
-    <LibraryPath>C:\Users\es476\Desktop\CASYS\hook\read_hook\read_hook\minhook;$(LibraryPath)</LibraryPath>
+    <IncludePath>C:\Users\es476\Desktop\CASYS\hook\read_hook\readfile_hook\minhook;$(IncludePath)</IncludePath>
+    <LibraryPath>C:\Users\es476\Desktop\CASYS\hook\read_hook\readfile_hook\minhook;$(LibraryPath)</LibraryPath>
   </PropertyGroup>
   <ItemDefinitionGroup Condition="'$(Configuration)|$(Platform)'=='Debug|Win32'">
     <ClCompile>
@@ -126,14 +125,14 @@
       <SubSystem>Console</SubSystem>
       <GenerateDebugInformation>true</GenerateDebugInformation>
       <AdditionalDependencies>libMinHook.x64.lib;%(AdditionalDependencies)</AdditionalDependencies>
-      <ModuleDefinitionFile>fread_hook.def</ModuleDefinitionFile>
+      <ModuleDefinitionFile>readfile_hook.def</ModuleDefinitionFile>
     </Link>
   </ItemDefinitionGroup>
   <ItemGroup>
     <ClCompile Include="main.cpp" />
   </ItemGroup>
   <ItemGroup>
-    <None Include="fread_hook.def" />
+    <None Include="readfile_hook.def" />
   </ItemGroup>
   <Import Project="$(VCTargetsPath)\Microsoft.Cpp.targets" />
   <ImportGroup Label="ExtensionTargets">
