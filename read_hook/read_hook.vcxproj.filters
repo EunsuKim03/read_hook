@@ -23,5 +23,8 @@
     <None Include="read_hook.def">
       <Filter>소스 파일</Filter>
     </None>
+    <None Include="..\..\omt_injection\omt_injection.py">
+      <Filter>소스 파일</Filter>
+    </None>
   </ItemGroup>
 </Project>
