@@ -21,10 +21,9 @@
   <PropertyGroup Label="Globals">
     <VCProjectVersion>17.0</VCProjectVersion>
     <Keyword>Win32Proj</Keyword>
-    <ProjectGuid>{7322f487-b7a9-4f48-9243-3ac2c0b6a59e}</ProjectGuid>
+    <ProjectGuid>{c741bb1d-a9d0-4977-9915-39c4f29e5a78}</ProjectGuid>
     <RootNamespace>readhook</RootNamespace>
     <WindowsTargetPlatformVersion>10.0</WindowsTargetPlatformVersion>
-    <ProjectName>fread_hook</ProjectName>
   </PropertyGroup>
   <Import Project="$(VCTargetsPath)\Microsoft.Cpp.Default.props" />
   <PropertyGroup Condition="'$(Configuration)|$(Platform)'=='Debug|Win32'" Label="Configuration">
@@ -72,8 +71,8 @@
   </ImportGroup>
   <PropertyGroup Label="UserMacros" />
   <PropertyGroup Condition="'$(Configuration)|$(Platform)'=='Release|x64'">
-    <IncludePath>C:\Users\es476\Desktop\CASYS\hook\read_hook\read_hook\minhook;$(IncludePath)</IncludePath>
-    <LibraryPath>C:\Users\es476\Desktop\CASYS\hook\read_hook\read_hook\minhook;$(LibraryPath)</LibraryPath>
+    <IncludePath>C:\Users\es476\Desktop\CASYS\hook\read_hook\readhook\minhook;$(IncludePath)</IncludePath>
+    <LibraryPath>C:\Users\es476\Desktop\CASYS\hook\read_hook\readhook\minhook;$(LibraryPath)</LibraryPath>
   </PropertyGroup>
   <ItemDefinitionGroup Condition="'$(Configuration)|$(Platform)'=='Debug|Win32'">
     <ClCompile>
@@ -126,14 +125,14 @@
       <SubSystem>Console</SubSystem>
       <GenerateDebugInformation>true</GenerateDebugInformation>
       <AdditionalDependencies>libMinHook.x64.lib;%(AdditionalDependencies)</AdditionalDependencies>
-      <ModuleDefinitionFile>fread_hook.def</ModuleDefinitionFile>
+      <ModuleDefinitionFile>readhook.def</ModuleDefinitionFile>
     </Link>
   </ItemDefinitionGroup>
   <ItemGroup>
     <ClCompile Include="main.cpp" />
   </ItemGroup>
   <ItemGroup>
-    <None Include="fread_hook.def" />
+    <None Include="readhook.def" />
   </ItemGroup>
   <Import Project="$(VCTargetsPath)\Microsoft.Cpp.targets" />
   <ImportGroup Label="ExtensionTargets">

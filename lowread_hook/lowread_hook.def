@@ -1,3 +1,0 @@
-LIBRARY "lowread_hook"
-EXPORTS
-    DummyExport @1

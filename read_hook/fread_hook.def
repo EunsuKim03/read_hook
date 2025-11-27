@@ -1,3 +1,0 @@
-LIBRARY "fread_hook"
-EXPORTS
-    DummyExport @1
