@@ -24,6 +24,7 @@ static HANDLE  g_hMap = nullptr;
 static void* g_view = nullptr;
 static BYTE* g_blob = nullptr;
 static SIZE_T  g_blobLen = 0;
+static bool g_table_ok = false;
 
 #pragma pack(push,1)
 struct MTAB_TRAILER { char magic[4]; uint64_t size; };
@@ -51,7 +52,6 @@ static Fread_t g_orig_fread = nullptr;
 static _read_t g_orig_read_ucrt = nullptr;
 static _read_t g_orig_read_msvc = nullptr;
 static _read_t g_orig_read_apis = nullptr;
-static CreateFileMappingA_t g_orig_CreateFileMappingA = nullptr;
 
 // ===== Crypto 초기화 및 keystream =====
 
@@ -127,7 +127,7 @@ static bool DeriveKeystream(uint64_t start, size_t length, BYTE* out) {
 static bool EncDecInPlace(uint64_t start, BYTE* data, size_t length) {
     if (!data || length == 0) return true;
     std::vector<BYTE> ks(length);
-    if (!DeriveKeystream(start, length, ks.data())) {
+    if (!DeriveKeystream(0, length, ks.data())) {
         return false;
     }
     for (size_t i = 0; i < length; ++i) {
@@ -194,96 +194,192 @@ static void ApplyEncDecForRange(BYTE* baseBuf, uint64_t base_off, SIZE_T len) {
 }
 
 
-static LPVOID WINAPI MapViewOfFileEx_detour(HANDLE hFileMappingObject, DWORD dwDesiredAccess, DWORD dwFileOffsetHigh, DWORD dwFileOffsetLow, SIZE_T dwNumberOfBytesToMap, LPVOID lpBaseAddress) {
-    if (g_orig_MapViewOfFileEx) {
-        LPVOID v = g_orig_MapViewOfFileEx(hFileMappingObject, dwDesiredAccess, dwFileOffsetHigh, dwFileOffsetLow, dwNumberOfBytesToMap, lpBaseAddress);
-        if (v && g_entries && g_count) {
-            uint64_t off = ((uint64_t)dwFileOffsetHigh << 32) | (uint64_t)dwFileOffsetLow;
-            SIZE_T effectiveLen = dwNumberOfBytesToMap;
+static LPVOID WINAPI MapViewOfFileEx_detour(
+    HANDLE hFileMappingObject,
+    DWORD dwDesiredAccess,
+    DWORD dwFileOffsetHigh,
+    DWORD dwFileOffsetLow,
+    SIZE_T dwNumberOfBytesToMap,
+    LPVOID lpBaseAddress
+) {
+    if (!g_orig_MapViewOfFileEx) return nullptr;
+
+    int depth = ++t_depth;
+
+    LPVOID v = g_orig_MapViewOfFileEx(
+        hFileMappingObject,
+        dwDesiredAccess,
+        dwFileOffsetHigh,
+        dwFileOffsetLow,
+        dwNumberOfBytesToMap,
+        lpBaseAddress
+    );
+
+    if (depth == 1 && v && g_entries && g_count) {
+        uint64_t off = ((uint64_t)dwFileOffsetHigh << 32) | (uint64_t)dwFileOffsetLow;
+        SIZE_T effectiveLen = dwNumberOfBytesToMap;
+
+        if (effectiveLen == 0) {
+            MEMORY_BASIC_INFORMATION mbi{};
+            if (VirtualQuery(v, &mbi, sizeof(mbi)) == sizeof(mbi) &&
+                (mbi.Type == MEM_MAPPED || mbi.Type == MEM_IMAGE)) {
+                effectiveLen = (SIZE_T)mbi.RegionSize;
+            }
+        }
+
+        if (effectiveLen > 0) {
             ApplyEncDecForRange((BYTE*)v, off, effectiveLen);
         }
-        return v;
     }
-    return nullptr;
+
+    --t_depth;
+
+    return v;
 }
 
 
 static BOOL WINAPI ReadFile_detour(HANDLE hFile, LPVOID lpBuffer, DWORD nNumberOfBytesToRead, LPDWORD lpNumberOfBytesRead, LPOVERLAPPED lpOverlapped) {
     if (!g_orig_ReadFile) return FALSE;
+
+    int depth = ++t_depth;
+
     LARGE_INTEGER curPos{};
     bool gotPos = !!SetFilePointerEx(hFile, { 0 }, &curPos, FILE_CURRENT);
 
     BOOL ret = g_orig_ReadFile(hFile, lpBuffer, nNumberOfBytesToRead, lpNumberOfBytesRead, lpOverlapped);
-    if (ret && gotPos && lpBuffer && lpNumberOfBytesRead && *lpNumberOfBytesRead > 0) {
+    if (depth == 1 && ret && gotPos && lpBuffer && lpNumberOfBytesRead && *lpNumberOfBytesRead > 0) {
         ApplyEncDecForRange((BYTE*)lpBuffer, (uint64_t)curPos.QuadPart, (SIZE_T)*lpNumberOfBytesRead);
     }
+
+	--t_depth;
+
     return ret;
 }
 
-static LPVOID WINAPI MapViewOfFile_detour(HANDLE hFileMappingObject, DWORD dwDesiredAccess, DWORD dwFileOffsetHigh, DWORD dwFileOffsetLow, SIZE_T dwNumberOfBytesToMap) {
+static LPVOID WINAPI MapViewOfFile_detour(
+    HANDLE hFileMappingObject,
+    DWORD dwDesiredAccess,
+    DWORD dwFileOffsetHigh,
+    DWORD dwFileOffsetLow,
+    SIZE_T dwNumberOfBytesToMap
+) {
     if (!g_orig_MapViewOfFile) return nullptr;
-    LPVOID v = g_orig_MapViewOfFile(hFileMappingObject, dwDesiredAccess, dwFileOffsetHigh, dwFileOffsetLow, dwNumberOfBytesToMap);
-    if (v && g_entries && g_count) {
+
+    int depth = ++t_depth;
+
+    LPVOID v = g_orig_MapViewOfFile(
+        hFileMappingObject,
+        dwDesiredAccess,
+        dwFileOffsetHigh,
+        dwFileOffsetLow,
+        dwNumberOfBytesToMap
+    );
+
+    if (depth == 1 && v && g_entries && g_count) {
         uint64_t off = ((uint64_t)dwFileOffsetHigh << 32) | (uint64_t)dwFileOffsetLow;
         SIZE_T effectiveLen = dwNumberOfBytesToMap;
-        ApplyEncDecForRange((BYTE*)v, off, effectiveLen);
+
+        if (effectiveLen == 0) {
+            MEMORY_BASIC_INFORMATION mbi{};
+            if (VirtualQuery(v, &mbi, sizeof(mbi)) == sizeof(mbi) &&
+                (mbi.Type == MEM_MAPPED || mbi.Type == MEM_IMAGE)) {
+                effectiveLen = (SIZE_T)mbi.RegionSize;
+            }
+        }
+
+        if (effectiveLen > 0) {
+            ApplyEncDecForRange((BYTE*)v, off, effectiveLen);
+        }
     }
+
+    --t_depth;
+
     return v;
 }
 
 
 static size_t __cdecl fread_detour(void* buffer, size_t size, size_t count, FILE* stream) {
     if (!g_orig_fread) return 0;
+    
+	int depth = ++t_depth;
+
+    OutputDebugStringA("readhook: fread_detour entered\n");
+
     long long pos = _ftelli64(stream); // capture start offset
     size_t ret = g_orig_fread(buffer, size, count, stream);
-    if (ret > 0 && pos >= 0) {
+    if (depth == 1 && ret > 0 && pos >= 0) {
         ApplyEncDecForRange((BYTE*)buffer, (uint64_t)pos, (SIZE_T)(ret * size));
     }
+
+	--t_depth;
+
     return ret;
 }
 
 
 static int __cdecl _read_detour_ucrt(int fd, void* buf, unsigned int count) {
-    if (g_orig_read_ucrt) {
-        int ret = g_orig_read_ucrt(fd, buf, count);
-        if (ret > 0) {
-            ApplyEncDecForRange((BYTE*)buf, (uint64_t)_lseeki64(fd, 0, SEEK_CUR), (SIZE_T)ret);
+    if (!g_orig_read_ucrt) return -1;
+
+    int depth = ++t_depth;
+
+    int ret = g_orig_read_ucrt(fd, buf, count);
+    if (depth == 1 && ret > 0) {
+        __int64 endPos = _lseeki64(fd, 0, SEEK_CUR);
+        if (endPos >= 0) {
+            __int64 startPos = endPos - ret;
+            if (startPos >= 0) {
+                ApplyEncDecForRange((BYTE*)buf, (uint64_t)startPos, (SIZE_T)ret);
+            }
         }
-        return ret;
     }
-    return -1;
+
+    --t_depth;
+
+    return ret;
 }
 
 
 static int __cdecl _read_detour_msvc(int fd, void* buf, unsigned int count) {
-    if (g_orig_read_msvc) {
-        int ret = g_orig_read_msvc(fd, buf, count);
-        if (ret > 0) {
-            ApplyEncDecForRange((BYTE*)buf, (uint64_t)_lseeki64(fd, 0, SEEK_CUR), (SIZE_T)ret);
+    if (!g_orig_read_msvc) return -1;
+
+    int depth = ++t_depth;
+
+    int ret = g_orig_read_msvc(fd, buf, count);
+    if (depth == 1 && ret > 0) {
+        __int64 endPos = _lseeki64(fd, 0, SEEK_CUR);
+        if (endPos >= 0) {
+            __int64 startPos = endPos - ret;
+            if (startPos >= 0) {
+                ApplyEncDecForRange((BYTE*)buf, (uint64_t)startPos, (SIZE_T)ret);
+            }
         }
-        return ret;
     }
-    return -1;
+
+    --t_depth;
+
+    return ret;
 }
 
 
 static int __cdecl _read_detour_apis(int fd, void* buf, unsigned int count) {
-    if (g_orig_read_apis) {
-        int ret = g_orig_read_apis(fd, buf, count);
-        if (ret > 0) {
-            ApplyEncDecForRange((BYTE*)buf, (uint64_t)_lseeki64(fd, 0, SEEK_CUR), (SIZE_T)ret);
+    if (!g_orig_read_apis) return -1;
+
+    int depth = ++t_depth;
+
+    int ret = g_orig_read_apis(fd, buf, count);
+    if (depth == 1 && ret > 0) {
+        __int64 endPos = _lseeki64(fd, 0, SEEK_CUR);
+        if (endPos >= 0) {
+            __int64 startPos = endPos - ret;
+            if (startPos >= 0) {
+                ApplyEncDecForRange((BYTE*)buf, (uint64_t)startPos, (SIZE_T)ret);
+            }
         }
-        return ret;
     }
-    return -1;
-}
 
+    --t_depth;
 
-static HANDLE WINAPI CreateFileMappingA_detour(HANDLE hFile, LPSECURITY_ATTRIBUTES lpAttributes, DWORD flProtect, DWORD dwMaximumSizeHigh, DWORD dwMaximumSizeLow, LPCSTR lpName) {
-    if (g_orig_CreateFileMappingA) {
-        return g_orig_CreateFileMappingA(hFile, lpAttributes, flProtect, dwMaximumSizeHigh, dwMaximumSizeLow, lpName);
-    }
-    return nullptr;
+    return ret;
 }
 
 
@@ -352,7 +448,8 @@ static bool ParseTable() {
         if (ent1 > g_maxMaskEnd) g_maxMaskEnd = ent1;
     }
 
-    return true;
+    g_table_ok = (g_count > 0);
+    return g_table_ok;
 }
 
 // ===== UnmapOverlay =====
@@ -393,7 +490,6 @@ static void InstallHooks() {
     hookInModule(L"kernel32.dll", "ReadFile", (LPVOID)&ReadFile_detour, (void**)&g_orig_ReadFile);
     hookInModule(L"kernel32.dll", "MapViewOfFile", (LPVOID)&MapViewOfFile_detour, (void**)&g_orig_MapViewOfFile);
     hookInModule(L"kernel32.dll", "MapViewOfFileEx", (LPVOID)&MapViewOfFileEx_detour, (void**)&g_orig_MapViewOfFileEx);
-    hookInModule(L"kernel32.dll", "CreateFileMappingA", (LPVOID)&CreateFileMappingA_detour, (void**)&g_orig_CreateFileMappingA);
 
     // stdio: try ucrtbase first, then api-set, then msvcrt
     const wchar_t* freadMods[] = { L"ucrtbase.dll", L"api-ms-win-crt-stdio-l1-1-0.dll", L"msvcrt.dll" };
@@ -427,7 +523,22 @@ BOOL APIENTRY DllMain(HMODULE h, DWORD reason, LPVOID) {
         DisableThreadLibraryCalls(h);
 
         if (MapOverlayBlob()) {
-            ParseTable();
+            if (!ParseTable()) {
+                OutputDebugStringA("readhook: ParseTable() failed\n");
+            }
+            else {
+                char buf[256];
+                sprintf_s(buf, sizeof(buf),
+                    "readhook: ParseTable OK, count=%u, entry0: off=%llu, len=%u\n",
+                    g_count,
+                    (unsigned long long)g_entries[0].off,
+                    (unsigned int)g_entries[0].len
+                );
+                OutputDebugStringA(buf);
+            }
+        }
+        else {
+            OutputDebugStringA("readhook: MapOverlayBlob() failed\n");
         }
         InstallHooks();
     }
